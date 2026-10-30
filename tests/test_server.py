@@ -133,7 +133,7 @@ class ServerTests(unittest.TestCase):
         job_id = payload["id"]
         for _ in range(50):
             status, job, _headers = call(self.port, "GET", f"/jobs/{job_id}")
-            if job["state"] not in {"queued", "running"}:
+            if job["state"] not in {"queued", "running", "cancelling"}:
                 break
         self.assertEqual(job["state"], "done")
         self.assertEqual(job["name"], "instagram_2026-10-30_21-05-09.zip")

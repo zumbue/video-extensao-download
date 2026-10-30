@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Video Extensão Download",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Baixa vídeo de um link. Reconhece a rede, escolhe a qualidade e, no YouTube, o trecho. Nomeia o arquivo pela rede, data e hora.",
   "action": {
     "default_title": "Video Extensão Download",

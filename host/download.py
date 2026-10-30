@@ -156,6 +156,8 @@ class Job:
 
     def update(self, **fields: object) -> None:
         with self.lock:
+            if self.cancel_event.is_set() and fields.get("state") == "running":
+                return
             for key, value in fields.items():
                 setattr(self, key, value)
 
@@ -174,7 +176,7 @@ class DownloadManager:
 
     def busy(self) -> bool:
         with self._lock:
-            return any(job.state in {"queued", "running"} for job in self._jobs.values())
+            return any(job.state in {"queued", "running", "cancelling"} for job in self._jobs.values())
 
     def reveal(self, name: str | None = None) -> Path:
         directory = self.downloads_dir.expanduser().resolve()
@@ -198,6 +200,10 @@ class DownloadManager:
         if job is None:
             return False
         job.cancel_event.set()
+        with job.lock:
+            if job.state in {"queued", "running"}:
+                job.state = "cancelling"
+                job.message = "Cancelando..."
         return True
 
     def start(self, request: DownloadRequest) -> dict:
@@ -208,7 +214,7 @@ class DownloadManager:
         if request.quality not in QUALITIES:
             raise UserError("Qualidade desconhecida.")
         with self._lock:
-            if any(job.state in {"queued", "running"} for job in self._jobs.values()):
+            if any(job.state in {"queued", "running", "cancelling"} for job in self._jobs.values()):
                 raise BusyError("Já existe um download em andamento.")
             job = Job(id=uuid.uuid4().hex[:12])
             self._jobs[job.id] = job

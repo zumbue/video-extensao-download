@@ -47,6 +47,7 @@ let videoId = null;
 let drag = null;
 let savedName = "";
 let sessionOpen = false;
+let cancelling = false;
 let finishedOnce = false;
 let healthTimer = null;
 let idleMark = null;
@@ -245,8 +246,8 @@ function render() {
   const nameReady = globalThis.MDE.sanitizeFilename(filenameInput.value) !== "midia" || filenameInput.value.trim() !== "";
   const blocked = Boolean(health?.ok && !health.resting && (!health.ffmpeg || !health.ytdlp));
   const canDownload = Boolean(network && filenameInput.value.trim() && nameReady && !trim.error && !blocked);
-  downloadButton.disabled = jobId ? false : !canDownload;
-  downloadButton.textContent = jobId ? "Cancelar" : "Baixar";
+  downloadButton.disabled = cancelling || (jobId ? false : !canDownload);
+  downloadButton.textContent = cancelling ? "Cancelando..." : (jobId ? "Cancelar" : "Baixar");
   downloadButton.classList.toggle("danger", Boolean(jobId));
   openFolderButton.disabled = !(health?.ok || health?.resting || savedName);
 
@@ -493,7 +494,17 @@ function noteFinished() {
 }
 
 function applyJob(job) {
+  if (job.state === "cancelling" || (cancelling && (job.state === "queued" || job.state === "running"))) {
+    cancelling = true;
+    clearTimeout(idleMark);
+    setBanner("bad", "Cancelando...");
+    setProgress(job.progress || 8, false);
+    progressLabel.textContent = "Cancelando...";
+    render();
+    return;
+  }
   if (job.state === "done") {
+    cancelling = false;
     jobId = null;
     hideProgress();
     savedName = job.name || savedName;
@@ -504,6 +515,7 @@ function applyJob(job) {
     return;
   }
   if (job.state === "error") {
+    cancelling = false;
     jobId = null;
     setProgress(job.progress || 0, true);
     setBanner("bad", job.error || "O download falhou.");
@@ -513,6 +525,7 @@ function applyJob(job) {
     return;
   }
   if (job.state === "cancelled") {
+    cancelling = false;
     jobId = null;
     hideProgress();
     setBanner("bad", "Download cancelado.");
@@ -543,10 +556,11 @@ async function poll() {
     }
     const job = await response.json();
     applyJob(job);
-    if (job.state === "queued" || job.state === "running") {
+    if (job.state === "queued" || job.state === "running" || job.state === "cancelling") {
       pollTimer = setTimeout(poll, 400);
     }
   } catch (error) {
+    cancelling = false;
     setBanner("bad", error.message || "Sem resposta do serviço.");
     jobId = null;
     render();
@@ -621,10 +635,13 @@ async function startDownload() {
 }
 
 async function cancelDownload() {
-  if (!jobId) {
+  if (!jobId || cancelling) {
     return;
   }
-  downloadButton.disabled = true;
+  cancelling = true;
+  setBanner("bad", "Cancelando...");
+  progressLabel.textContent = "Cancelando...";
+  render();
   try {
     const response = await fetch(`${SERVICE}/jobs/${jobId}/cancel`, { method: "POST", headers });
     if (!response.ok) {
@@ -632,6 +649,7 @@ async function cancelDownload() {
     }
     applyJob(await response.json());
   } catch (error) {
+    cancelling = false;
     setBanner("bad", error.message || "Não foi possível cancelar.");
     render();
   }

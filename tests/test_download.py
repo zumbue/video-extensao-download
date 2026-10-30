@@ -28,7 +28,7 @@ def wait_until(manager, job_id):
     last = None
     for _ in range(100):
         last = manager.get(job_id)
-        if last and last["state"] not in {"queued", "running"}:
+        if last and last["state"] not in {"queued", "running", "cancelling"}:
             return last
         time.sleep(0.02)
     raise AssertionError(last)
@@ -112,6 +112,30 @@ class DownloadTests(unittest.TestCase):
             with self.assertRaises(BusyError):
                 manager.start(request())
             self.assertTrue(manager.cancel(job["id"]))
+            done = wait_until(manager, job["id"])
+            self.assertEqual(done["state"], "cancelled")
+
+        with tempfile.TemporaryDirectory() as directory:
+            entered = threading.Event()
+            release = threading.Event()
+
+            def blocked(url, opts):
+                entered.set()
+                release.wait(2)
+                opts["progress_hooks"][0]({
+                    "status": "downloading",
+                    "downloaded_bytes": 1,
+                    "total_bytes": 2,
+                })
+
+            manager = DownloadManager(directory, runner=blocked, ffmpeg_ok=lambda: True)
+            job = manager.start(request())
+            self.assertTrue(entered.wait(1))
+            self.assertTrue(manager.cancel(job["id"]))
+            self.assertEqual(manager.get(job["id"])["state"], "cancelling")
+            self.assertEqual(manager.get(job["id"])["message"], "Cancelando...")
+            self.assertTrue(manager.busy())
+            release.set()
             done = wait_until(manager, job["id"])
             self.assertEqual(done["state"], "cancelled")
 
