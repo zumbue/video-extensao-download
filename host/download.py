@@ -1,11 +1,16 @@
 """Download com yt-dlp, qualidade escolhida e ZIP opcional."""
 
 import math
+import os
 import shutil
+import signal
+import subprocess
 import tempfile
 import threading
+import time
 import uuid
 import zipfile
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -22,6 +27,9 @@ QUALITIES = {
 }
 PREFERRED_EXTENSIONS = (".mp4", ".mp3", ".m4a", ".webm", ".mkv", ".opus", ".ogg")
 IGNORED_EXTENSIONS = {".part", ".ytdl", ".jpg", ".jpeg", ".png", ".webp", ".json"}
+PARTIAL_EXTENSIONS = {".mp4", ".mp3", ".m4a", ".webm", ".mkv", ".opus", ".ogg", ".part", ".ts"}
+# Reencodar um trecho longo trava o FFmpeg no vídeo inteiro. Cortes curtos continuam precisos.
+PRECISE_CUT_SECONDS = 180
 
 
 class BusyError(Exception):
@@ -30,6 +38,114 @@ class BusyError(Exception):
 
 class DownloadCancelled(Exception):
     """A pessoa cancelou."""
+
+
+def precise_cut(start: float | None, end: float | None) -> bool:
+    """Cortes curtos e com fim marcado podem reencodar. O resto copia o fluxo."""
+    if end is None:
+        return False
+    begin = 0.0 if start is None else start
+    length = end - begin
+    return 0 < length <= PRECISE_CUT_SECONDS
+
+
+def partial_bytes(directory: Path) -> int | None:
+    if not directory.is_dir():
+        return None
+    total = 0
+    found = False
+    for path in directory.rglob("*"):
+        if path.is_symlink() or not path.is_file():
+            continue
+        if path.suffix.lower() not in PARTIAL_EXTENSIONS and not path.name.endswith(".part"):
+            continue
+        try:
+            total += path.stat().st_size
+        except OSError:
+            continue
+        found = True
+    return total if found else None
+
+
+class ChildTracker:
+    """Lembra processos abertos pelo yt-dlp para o cancelamento poder matá-los."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._children: list[subprocess.Popen] = []
+
+    def remember(self, process: subprocess.Popen) -> None:
+        with self._lock:
+            self._children.append(process)
+
+    def stop(self) -> None:
+        with self._lock:
+            children = list(self._children)
+        for process in children:
+            terminate_process(process)
+
+
+def terminate_process(process: subprocess.Popen) -> None:
+    if process.poll() is not None:
+        return
+    if os.name != "nt":
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        except OSError:
+            process.terminate()
+    else:
+        process.terminate()
+    try:
+        process.wait(timeout=0.4)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    if os.name != "nt":
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except OSError:
+            process.kill()
+    else:
+        process.kill()
+
+
+@contextmanager
+def track_children(tracker: ChildTracker):
+    import subprocess as subprocess_module
+
+    original_sub = subprocess_module.Popen
+    ytu = None
+    original_yt = None
+    try:
+        import yt_dlp.utils as ytu
+        original_yt = ytu.Popen.__init__
+    except ImportError:
+        ytu = None
+
+    class Tracked(original_sub):
+        def __init__(self, *args, **kwargs):
+            if os.name != "nt":
+                kwargs["start_new_session"] = True
+            super().__init__(*args, **kwargs)
+            tracker.remember(self)
+
+    def tracked_yt_init(self, *args, **kwargs):
+        if os.name != "nt":
+            kwargs["start_new_session"] = True
+        original_yt(self, *args, **kwargs)
+        tracker.remember(self)
+
+    subprocess_module.Popen = Tracked
+    if ytu is not None and original_yt is not None:
+        ytu.Popen.__init__ = tracked_yt_init
+    try:
+        yield
+    finally:
+        subprocess_module.Popen = original_sub
+        if ytu is not None and original_yt is not None:
+            ytu.Popen.__init__ = original_yt
 
 
 def format_selector(quality: str) -> str:
@@ -139,6 +255,10 @@ class Job:
     path: str | None = None
     name: str | None = None
     error: str | None = None
+    downloaded: int | None = None
+    total: int | None = None
+    speed: float | None = None
+    hooked_at: float | None = None
     cancel_event: threading.Event = field(default_factory=threading.Event)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -152,10 +272,15 @@ class Job:
                 "path": self.path,
                 "name": self.name,
                 "error": self.error,
+                "downloaded": self.downloaded,
+                "total": self.total,
+                "speed": None if self.speed is None else round(float(self.speed), 1),
             }
 
     def update(self, **fields: object) -> None:
         with self.lock:
+            if self.state in {"done", "error", "cancelled"}:
+                return
             if self.cancel_event.is_set() and fields.get("state") == "running":
                 return
             for key, value in fields.items():
@@ -195,6 +320,30 @@ class DownloadManager:
         job = self._jobs.get(job_id)
         return None if job is None else job.snapshot()
 
+    def library(self) -> dict:
+        with self._lock:
+            active = next(
+                (job.snapshot() for job in self._jobs.values() if job.state in {"queued", "running", "cancelling"}),
+                None,
+            )
+        return {"active": active, "files": self.finished_files()}
+
+    def finished_files(self) -> list[dict]:
+        directory = self.downloads_dir.expanduser().resolve()
+        if not directory.is_dir():
+            return []
+        allowed = {".mp4", ".mp3", ".zip", ".webm", ".mkv", ".m4a"}
+        rows = []
+        for path in directory.iterdir():
+            if path.is_symlink() or not path.is_file() or path.name.startswith("."):
+                continue
+            if path.suffix.lower() not in allowed:
+                continue
+            stat = path.stat()
+            rows.append({"name": path.name, "size": stat.st_size, "mtime": int(stat.st_mtime)})
+        rows.sort(key=lambda row: (row["mtime"], row["name"]), reverse=True)
+        return rows[:30]
+
     def cancel(self, job_id: str) -> bool:
         job = self._jobs.get(job_id)
         if job is None:
@@ -223,13 +372,46 @@ class DownloadManager:
         threading.Thread(target=self._worker, args=(job, request), daemon=True).start()
         return job.snapshot()
 
+    def _watch_download(self, job: Job, temporary: Path, tracker: ChildTracker, stop: threading.Event) -> None:
+        last_size = None
+        last_time = time.monotonic()
+        while not stop.wait(0.4):
+            if job.cancel_event.is_set():
+                tracker.stop()
+                return
+            size = partial_bytes(temporary)
+            now = time.monotonic()
+            if size is None:
+                continue
+            if last_size is not None and now > last_time:
+                speed = max(0, size - last_size) / (now - last_time)
+            else:
+                speed = 0
+            last_size = size
+            last_time = now
+            with job.lock:
+                if job.state != "running" or job.message == "Processando...":
+                    continue
+                if job.hooked_at is not None and now - job.hooked_at < 1.5:
+                    continue
+            job.update(state="running", message="Baixando...", downloaded=size, speed=speed)
+
     def _worker(self, job: Job, request: DownloadRequest) -> None:
         temporary = Path(tempfile.mkdtemp(prefix="mde-"))
+        tracker = ChildTracker()
+        stop_watching = threading.Event()
+        watcher = threading.Thread(
+            target=self._watch_download,
+            args=(job, temporary, tracker, stop_watching),
+            daemon=True,
+        )
         try:
             job.update(state="running", message="Baixando...", progress=0)
             if job.cancel_event.is_set():
                 raise DownloadCancelled()
-            self._runner(request.url, self._options(request, temporary, job))
+            watcher.start()
+            with track_children(tracker):
+                self._runner(request.url, self._options(request, temporary, job))
             if job.cancel_event.is_set():
                 raise DownloadCancelled()
             destination = self._store(pick_media(temporary), request)
@@ -253,6 +435,9 @@ class DownloadManager:
                 message = message[:400]
                 job.update(state="error", message=message, error=message)
         finally:
+            stop_watching.set()
+            if job.cancel_event.is_set():
+                tracker.stop()
             shutil.rmtree(temporary, ignore_errors=True)
             if self._on_settled is not None:
                 self._on_settled()
@@ -272,14 +457,25 @@ class DownloadManager:
         def hook(data: dict) -> None:
             if job.cancel_event.is_set():
                 raise DownloadCancelled()
+            with job.lock:
+                job.hooked_at = time.monotonic()
             status = data.get("status")
             if status == "downloading":
                 total = data.get("total_bytes") or data.get("total_bytes_estimate") or 0
                 done = data.get("downloaded_bytes") or 0
                 progress = (done / total * 100) if total else job.progress
-                job.update(state="running", progress=progress, message="Baixando...")
+                raw_speed = data.get("speed")
+                speed = float(raw_speed) if isinstance(raw_speed, (int, float)) and raw_speed >= 0 else None
+                job.update(
+                    state="running",
+                    progress=progress,
+                    message="Baixando...",
+                    downloaded=int(done),
+                    total=int(total) if total else None,
+                    speed=speed,
+                )
             elif status == "finished":
-                job.update(state="running", progress=100, message="Processando...")
+                job.update(state="running", progress=100, message="Processando...", speed=None)
 
         options = {
             "quiet": True,
@@ -310,6 +506,8 @@ class DownloadManager:
         end = request.end_time
         if end is not None or (start is not None and start > 0):
             options["download_ranges"] = self._range_factory(0.0 if start is None else start, end)
-            # Sem cópia de fluxo, o FFmpeg descarta o pedaço até o tempo exato.
-            options["force_keyframes_at_cuts"] = True
+            # Reencodar só um trecho curto. Um início sem fim faria o FFmpeg
+            # reprocessar o vídeo inteiro e o cancelamento não o alcançava.
+            if precise_cut(start, end):
+                options["force_keyframes_at_cuts"] = True
         return options

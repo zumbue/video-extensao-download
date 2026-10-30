@@ -93,6 +93,12 @@ def make_handler(app: App):
             if path == "/health":
                 self._send_json(200, health_payload(app.idle))
                 return
+            if path == "/downloads":
+                if not self._post_allowed():
+                    self._send_json(403, {"error": "Origem recusada."})
+                    return
+                self._send_json(200, app.manager.library())
+                return
             if path.startswith("/jobs/"):
                 job_id = path.removeprefix("/jobs/").strip("/")
                 job = app.manager.get(job_id)

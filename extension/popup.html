@@ -22,9 +22,10 @@
     <label class="field">
       <span>Link</span>
       <span class="row">
-        <input id="url" type="url" inputmode="url" placeholder="Cole qualquer link http ou https" autocomplete="off" spellcheck="false">
+        <input id="url" type="url" inputmode="url" placeholder="Cole qualquer link http ou https" autocomplete="off" spellcheck="false" aria-describedby="page-link">
         <button id="use-tab" class="ghost" type="button">Aba</button>
       </span>
+      <small id="page-link" hidden>Link da página aberta.</small>
     </label>
 
     <div class="field">
@@ -55,7 +56,7 @@
         <button id="trim-start-handle" class="trim-handle" type="button" role="slider" aria-label="Início do trecho" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"></button>
         <button id="trim-end-handle" class="trim-handle" type="button" role="slider" aria-label="Fim do trecho" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"></button>
       </div>
-      <small id="trim-meta">Vazio baixa o vídeo inteiro.</small>
+      <small id="trim-meta"><span id="trim-spinner" class="spinner" hidden aria-hidden="true"></span><span id="trim-meta-text">Vazio baixa o vídeo inteiro.</span></small>
     </fieldset>
 
     <label class="field">
@@ -83,8 +84,27 @@
 
     <div class="actions">
       <button id="download" class="primary" type="submit" disabled>Baixar</button>
-      <button id="open-folder" class="ghost" type="button" disabled>Abrir pasta</button>
+      <div class="side-actions">
+        <button id="downloads-toggle" class="ghost" type="button" aria-expanded="false" aria-controls="downloads-panel">
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+            <path d="M8 2.2v6.2M5.4 6.1 8 8.8l2.6-2.7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M3.2 10.2V12a1 1 0 0 0 1 1h7.6a1 1 0 0 0 1-1v-1.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          Downloads
+        </button>
+        <button id="open-folder" class="ghost" type="button" disabled>Abrir pasta</button>
+      </div>
     </div>
+    <section id="downloads-panel" class="downloads" hidden>
+      <div id="downloads-live" class="download-live" hidden>
+        <strong id="downloads-live-title">Baixando</strong>
+        <span id="downloads-live-meta"></span>
+        <div class="mini-bar" aria-hidden="true"><div id="downloads-live-bar"></div></div>
+      </div>
+      <p class="downloads-label">Concluídos</p>
+      <ul id="downloads-list"></ul>
+      <p id="downloads-empty" class="empty">Nenhum arquivo ainda.</p>
+    </section>
   </form>
 
   <footer>

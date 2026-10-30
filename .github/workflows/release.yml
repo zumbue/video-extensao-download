@@ -20,4 +20,4 @@ jobs:
           python3 scripts/package_extension.py
           gh release create "$GITHUB_REF_NAME" dist/video-extensao-download.zip \
             --title "Video Extensão Download ${GITHUB_REF_NAME#v}" \
-            --notes "Extraia o ZIP e dê dois cliques em Instalar. No Linux e no Windows a extensão inicia o serviço ao colar um link e ele se encerra sozinho depois do download. Fechar e abrir a extensão deixa o campo vazio. O botão Cancelar responde na hora. O botão Abrir pasta mostra o arquivo no gerenciador."
+            --notes "Extraia o ZIP e dê dois cliques em Instalar. No Linux e no Windows a extensão inicia o serviço ao abrir numa página de vídeo ou ao colar um link, e ele se encerra sozinho depois do download. Abrir a extensão numa rede reconhecida preenche o link da página. O botão Downloads mostra o quanto já baixou, a velocidade e os arquivos concluídos. Cancelar interrompe o download na hora. Um trecho longo não recodifica o vídeo inteiro."

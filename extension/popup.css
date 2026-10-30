@@ -268,7 +268,25 @@ input.bad {
 }
 
 #trim-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   min-height: 15px;
+}
+
+.spinner {
+  display: block;
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  border: 2px solid #3a3a3a;
+  border-top-color: var(--text);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 #trim-meta.bad { color: var(--red); }
@@ -370,25 +388,130 @@ input.bad {
 
 .actions {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   gap: 8px;
   margin-top: 8px;
+}
+
+.side-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: none;
+}
+
+.side-actions .ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.side-actions svg { display: block; flex: none; }
+
+#downloads-toggle.live {
+  color: var(--green);
+  border-color: #1f6b45;
+}
+
+.downloads {
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #101010;
+  overflow: hidden;
+}
+
+.download-live {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.download-live strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+#downloads-live-meta {
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.mini-bar {
+  height: 4px;
+  margin-top: 4px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: #2a2a2a;
+}
+
+#downloads-live-bar {
+  width: 0;
+  height: 100%;
+  background: var(--green);
+}
+
+.downloads-label {
+  margin: 0;
+  padding: 7px 10px 0;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.downloads ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 148px;
+  overflow: auto;
+}
+
+.downloads .file {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+
+.downloads .file span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.downloads .file:hover { background: #1c1c1c; }
+
+.downloads .empty {
+  margin: 0;
+  padding: 8px 10px;
 }
 
 .primary {
   width: auto;
   flex: 1;
-  height: 42px;
+  height: auto;
+  min-height: 42px;
   border: 1px solid transparent;
   border-radius: 12px;
   background: var(--green);
   color: var(--green-ink);
   font-weight: 600;
-}
-
-#open-folder {
-  height: 42px;
-  padding: 0 12px;
 }
 
 #open-folder:disabled {

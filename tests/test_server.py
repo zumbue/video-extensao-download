@@ -140,6 +140,15 @@ class ServerTests(unittest.TestCase):
         with zipfile.ZipFile(job["path"]) as archive:
             self.assertEqual(archive.namelist(), ["instagram_2026-10-30_21-05-09.mp4"])
 
+        (Path(self.tmp.name) / "pronto.mp4").write_bytes(b"abc")
+        status, denied, _headers = call(self.port, "GET", "/downloads", client=None)
+        self.assertEqual(status, 403)
+        status, library, _headers = call(self.port, "GET", "/downloads", origin="chrome-extension://abc")
+        self.assertEqual(status, 200)
+        self.assertIsNone(library["active"])
+        self.assertEqual(library["files"][0]["name"], "pronto.mp4")
+        self.assertEqual(library["files"][0]["size"], 3)
+
         status, missing, _headers = call(self.port, "GET", "/jobs/nao-existe")
         self.assertEqual(status, 404)
         status, bad, _headers = call(

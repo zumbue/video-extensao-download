@@ -1,3 +1,6 @@
+import os
+import signal
+import subprocess
 import sys
 import tempfile
 import threading
@@ -8,7 +11,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from host.download import BusyError, DownloadManager, format_selector, media_facts, unique_destination
+from host.download import (
+    BusyError,
+    DownloadManager,
+    Job,
+    format_selector,
+    media_facts,
+    partial_bytes,
+    precise_cut,
+    unique_destination,
+)
 from host.naming import DownloadRequest, UserError
 
 
@@ -143,6 +155,42 @@ class DownloadTests(unittest.TestCase):
         with self.assertRaises(UserError):
             blocked.start(request())
 
+    def test_reports_bytes_speed_and_finished_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            (folder / "pronto.mp4").write_bytes(b"abc")
+            (folder / "nota.txt").write_bytes(b"x")
+            release = threading.Event()
+
+            def runner(url, opts):
+                opts["progress_hooks"][0]({
+                    "status": "downloading",
+                    "downloaded_bytes": 2048,
+                    "total_bytes_estimate": 4096,
+                    "speed": 1536,
+                })
+                release.wait(2)
+
+            manager = DownloadManager(folder, runner=runner, ffmpeg_ok=lambda: True)
+            job = manager.start(request())
+            snap = None
+            for _ in range(50):
+                snap = manager.get(job["id"])
+                if snap and snap["downloaded"] == 2048:
+                    break
+                time.sleep(0.02)
+            self.assertEqual(snap["downloaded"], 2048)
+            self.assertEqual(snap["total"], 4096)
+            self.assertEqual(snap["speed"], 1536)
+            self.assertEqual(snap["progress"], 50)
+            library = manager.library()
+            self.assertEqual(library["active"]["id"], job["id"])
+            self.assertEqual([item["name"] for item in library["files"]], ["pronto.mp4"])
+            self.assertEqual(library["files"][0]["size"], 3)
+            release.set()
+            done = wait_until(manager, job["id"])
+            self.assertEqual(done["state"], "error")
+
     def test_error_message_drops_the_extractor_prefix(self):
         with tempfile.TemporaryDirectory() as directory:
             def runner(url, opts):
@@ -185,6 +233,90 @@ class DownloadTests(unittest.TestCase):
             wait_until(manager, manager.start(request(end_time=8))["id"])
             self.assertEqual(captured["download_ranges"], {"start": 0.0, "end": 8})
             self.assertTrue(captured["force_keyframes_at_cuts"])
+
+            wait_until(manager, manager.start(request(start_time=6))["id"])
+            self.assertEqual(captured["download_ranges"], {"start": 6, "end": None})
+            self.assertNotIn("force_keyframes_at_cuts", captured)
+
+            wait_until(manager, manager.start(request(start_time=1, end_time=400))["id"])
+            self.assertEqual(captured["download_ranges"], {"start": 1, "end": 400})
+            self.assertNotIn("force_keyframes_at_cuts", captured)
+
+    def test_precise_cut_skips_an_open_or_long_range(self):
+        self.assertFalse(precise_cut(6, None))
+        self.assertFalse(precise_cut(1, 400))
+        self.assertTrue(precise_cut(12.5, 40))
+        self.assertTrue(precise_cut(None, 8))
+        self.assertFalse(precise_cut(10, 10))
+
+    def test_partial_file_reports_size_and_speed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+
+            def runner(url, opts):
+                home = Path(opts["paths"]["home"])
+                part = home / "media.mp4.part"
+                part.write_bytes(b"x" * 3000)
+                time.sleep(1.6)
+                (home / "media.mp4").write_bytes(b"video-bytes")
+
+            manager = DownloadManager(folder, runner=runner, ffmpeg_ok=lambda: True)
+            job_id = manager.start(request())["id"]
+            seen = None
+            for _ in range(40):
+                seen = manager.get(job_id)
+                if seen and (seen.get("downloaded") or 0) >= 3000 and isinstance(seen.get("speed"), (int, float)):
+                    break
+                time.sleep(0.05)
+            self.assertGreaterEqual(seen["downloaded"], 3000)
+            self.assertIsInstance(seen["speed"], (int, float))
+            done = wait_until(manager, job_id)
+            self.assertEqual(done["state"], "done")
+
+    def test_cancel_kills_the_child_and_releases_the_lock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pid_box = {}
+
+            def runner(url, opts):
+                proc = subprocess.Popen(["sleep", "30"], start_new_session=True)
+                pid_box["pid"] = proc.pid
+                proc.wait()
+
+            manager = DownloadManager(directory, runner=runner, ffmpeg_ok=lambda: True)
+            job = manager.start(request())
+            for _ in range(50):
+                if pid_box.get("pid"):
+                    break
+                time.sleep(0.02)
+            self.assertIn("pid", pid_box)
+            self.assertTrue(manager.cancel(job["id"]))
+            self.assertTrue(manager.busy())
+            done = wait_until(manager, job["id"])
+            self.assertEqual(done["state"], "cancelled")
+            self.assertFalse(manager.busy())
+            self.assertIsNone(manager.get(job["id"])["error"])
+            try:
+                os.kill(pid_box["pid"], 0)
+                os.killpg(pid_box["pid"], signal.SIGKILL)
+                self.fail("o processo filho continuou depois do cancelamento")
+            except ProcessLookupError:
+                pass
+
+    def test_a_finished_job_ignores_later_progress(self):
+        job = Job(id="abc")
+        job.update(state="done", message="Arquivo salvo.")
+        job.update(state="running", message="Baixando...", downloaded=9, speed=10)
+        snap = job.snapshot()
+        self.assertEqual(snap["state"], "done")
+        self.assertIsNone(snap["downloaded"])
+
+    def test_partial_bytes_counts_part_files_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            (folder / "media.mp4.part").write_bytes(b"abc")
+            (folder / "thumb.jpg").write_bytes(b"jpeg")
+            self.assertEqual(partial_bytes(folder), 3)
+            self.assertIsNone(partial_bytes(folder / "ausente"))
 
     def test_media_facts_keep_a_positive_duration(self):
         self.assertEqual(media_facts({"duration": 19.0412, "title": "zoo"}), {

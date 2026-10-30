@@ -4,6 +4,7 @@ const NATIVE_HOST = "com.videoextensao.download";
 
 const form = document.querySelector("#form");
 const urlInput = document.querySelector("#url");
+const pageNote = document.querySelector("#page-link");
 const filenameInput = document.querySelector("#filename");
 const compressInput = document.querySelector("#compress");
 const networkNode = document.querySelector("#network");
@@ -16,6 +17,14 @@ const barNode = document.querySelector("#bar");
 const progressLabel = document.querySelector("#progress-label");
 const downloadButton = document.querySelector("#download");
 const openFolderButton = document.querySelector("#open-folder");
+const downloadsToggle = document.querySelector("#downloads-toggle");
+const downloadsPanel = document.querySelector("#downloads-panel");
+const downloadsLive = document.querySelector("#downloads-live");
+const downloadsLiveTitle = document.querySelector("#downloads-live-title");
+const downloadsLiveMeta = document.querySelector("#downloads-live-meta");
+const downloadsLiveBar = document.querySelector("#downloads-live-bar");
+const downloadsList = document.querySelector("#downloads-list");
+const downloadsEmpty = document.querySelector("#downloads-empty");
 const useTabButton = document.querySelector("#use-tab");
 const renameButton = document.querySelector("#rename");
 const hintNode = document.querySelector("#hint");
@@ -27,11 +36,14 @@ const trimFill = document.querySelector("#trim-fill");
 const startHandle = document.querySelector("#trim-start-handle");
 const endHandle = document.querySelector("#trim-end-handle");
 const trimMeta = document.querySelector("#trim-meta");
+const trimMetaText = document.querySelector("#trim-meta-text");
+const trimSpinner = document.querySelector("#trim-spinner");
 
 const browserApi = globalThis.chrome;
 const headers = { "X-Mde-Client": CLIENT };
 
 let catalog = null;
+let pageLink = "";
 let quality = "best";
 let autoName = true;
 let stamp = null;
@@ -46,6 +58,10 @@ let probedId = null;
 let videoId = null;
 let drag = null;
 let savedName = "";
+let downloadsOpen = false;
+let completedFiles = [];
+let filesStamp = "";
+let liveJob = null;
 let sessionOpen = false;
 let cancelling = false;
 let finishedOnce = false;
@@ -108,6 +124,143 @@ function hideProgress() {
   barNode.style.width = "0";
   progressLabel.textContent = "0%";
   progressWrap.classList.remove("bad");
+}
+
+function formatBytes(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0) {
+    return "";
+  }
+  const units = ["B", "KB", "MB", "GB"];
+  let size = amount;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  const digits = unit === 0 ? 0 : (size >= 10 ? 1 : 2);
+  return `${size.toFixed(digits).replace(".", ",")} ${units[unit]}`;
+}
+
+function liveMeta(job) {
+  const done = formatBytes(job.downloaded);
+  const total = formatBytes(job.total);
+  const parts = [];
+  if (done && total) {
+    parts.push(`${done} de ${total}`);
+  } else if (done) {
+    parts.push(done);
+  }
+  if (typeof job.speed === "number" && job.speed >= 0) {
+    parts.push(`${formatBytes(job.speed)}/s`);
+  } else if (job.state === "running" && job.message !== "Processando...") {
+    parts.push("medindo a rede…");
+  }
+  return parts.join(" · ");
+}
+
+function trackLive(job) {
+  if (job && (job.state === "queued" || job.state === "running" || job.state === "cancelling")) {
+    liveJob = job;
+    return;
+  }
+  liveJob = null;
+}
+
+function renderDownloads() {
+  const active = Boolean(liveJob && (liveJob.state === "queued" || liveJob.state === "running" || liveJob.state === "cancelling"));
+  downloadsToggle.classList.toggle("live", active || Boolean(jobId));
+  downloadsToggle.setAttribute("aria-expanded", String(downloadsOpen));
+  downloadsPanel.hidden = !downloadsOpen;
+  if (!downloadsOpen) {
+    return;
+  }
+  downloadsLive.hidden = !active;
+  if (active) {
+    if (liveJob.state === "cancelling") {
+      downloadsLiveTitle.textContent = "Cancelando...";
+    } else if (liveJob.message === "Processando...") {
+      downloadsLiveTitle.textContent = "Processando...";
+    } else {
+      downloadsLiveTitle.textContent = "Baixando";
+    }
+    downloadsLiveMeta.textContent = liveMeta(liveJob);
+    const amount = Math.max(0, Math.min(100, Number(liveJob.progress) || 0));
+    downloadsLiveBar.style.width = `${amount}%`;
+  }
+  const stamp = completedFiles.map((file) => `${file.name}:${file.size}`).join("\n");
+  if (stamp !== filesStamp) {
+    filesStamp = stamp;
+    downloadsList.replaceChildren();
+    for (const file of completedFiles) {
+      const item = document.createElement("li");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "file";
+      const name = document.createElement("span");
+      name.textContent = file.name;
+      const meta = document.createElement("small");
+      meta.textContent = formatBytes(file.size);
+      button.append(name, meta);
+      button.addEventListener("click", () => revealFile(file.name));
+      item.append(button);
+      downloadsList.append(item);
+    }
+  }
+  downloadsEmpty.hidden = completedFiles.length > 0;
+  if (!completedFiles.length && downloadsEmpty.textContent === "") {
+    downloadsEmpty.textContent = "Nenhum arquivo ainda.";
+  }
+}
+
+async function refreshDownloads() {
+  const response = await fetch(`${SERVICE}/downloads`, { headers });
+  if (!response.ok) {
+    throw new Error(await readError(response));
+  }
+  const payload = await response.json();
+  completedFiles = Array.isArray(payload.files) ? payload.files : [];
+  filesStamp = "";
+  const active = payload.active;
+  if (active && (active.state === "queued" || active.state === "running" || active.state === "cancelling")) {
+    liveJob = active;
+    if (!jobId) {
+      jobId = active.id;
+      cancelling = active.state === "cancelling";
+      poll();
+    }
+  }
+  downloadsEmpty.textContent = "Nenhum arquivo ainda.";
+  render();
+}
+
+async function revealFile(name) {
+  openFolderButton.disabled = true;
+  try {
+    if (!health?.ok || health.resting || health.idle) {
+      await wakeService();
+    }
+    if (!health?.ok) {
+      throw new Error("O serviço não iniciou. Abra Instalar de novo.");
+    }
+    const body = {};
+    if (name) {
+      body.name = name;
+    } else if (savedName) {
+      body.name = savedName;
+    }
+    const response = await fetch(`${SERVICE}/folder`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      throw new Error(await readError(response));
+    }
+  } catch (error) {
+    setBanner("bad", error.message || "Não foi possível abrir a pasta.");
+  }
+  render();
 }
 
 function youtubeVideoId(url) {
@@ -218,7 +371,9 @@ function renderTrim(network, trim) {
   if (showBar && !trim.error) {
     placeHandles(trim.start ?? 0, trim.end ?? duration);
   }
-  trimMeta.textContent = trim.error || probeMessage();
+  const loading = probeState === "loading" && !trim.error;
+  trimSpinner.hidden = !loading;
+  trimMetaText.textContent = trim.error || probeMessage();
   trimMeta.classList.toggle("bad", Boolean(trim.error));
 }
 
@@ -288,6 +443,7 @@ function render() {
     const runtime = health.js_runtime ? `Runtime ${health.js_runtime}.` : "Sem Node ou Deno: o YouTube pode falhar.";
     hintNode.textContent = `Salva em ~/Downloads/Video Extensao Download. ${runtime}`;
   }
+  renderDownloads();
 }
 
 function selectQuality(next) {
@@ -317,6 +473,37 @@ function saveDraft() {
   // O link e o vídeo anterior ficam só enquanto este popup está aberto.
 }
 
+function markPageLink(url) {
+  pageLink = url;
+  pageNote.hidden = urlInput.value.trim() !== url;
+}
+
+function fillUrl(url) {
+  urlInput.value = url;
+  stamp = new Date().toISOString();
+  autoName = true;
+  startInput.value = "";
+  endInput.value = "";
+  const hinted = globalThis.MDE.youtubeStart(url);
+  if (hinted) {
+    startInput.value = globalThis.MDE.formatTime(hinted);
+  }
+}
+
+function isKnownVideo(url) {
+  const network = networkOf(url);
+  return Boolean(network && network.id !== "outra");
+}
+
+async function currentPageUrl() {
+  if (!browserApi?.tabs) {
+    return "";
+  }
+  const [tab] = await browserApi.tabs.query({ active: true, currentWindow: true });
+  const url = tab?.url || "";
+  return /^https?:/i.test(url) ? url : "";
+}
+
 async function loadInitialUrl() {
   const session = storage();
   const stored = session ? await session.get(["pendingUrl"]) : {};
@@ -324,15 +511,7 @@ async function loadInitialUrl() {
     await session.remove(["draft", "pendingUrl"]);
   }
   if (stored.pendingUrl && /^https?:/i.test(stored.pendingUrl)) {
-    urlInput.value = stored.pendingUrl;
-    stamp = new Date().toISOString();
-    autoName = true;
-    startInput.value = "";
-    endInput.value = "";
-    const hinted = globalThis.MDE.youtubeStart(stored.pendingUrl);
-    if (hinted) {
-      startInput.value = globalThis.MDE.formatTime(hinted);
-    }
+    fillUrl(stored.pendingUrl);
     return "pending";
   }
   const params = new URLSearchParams(location.search);
@@ -354,6 +533,12 @@ async function loadInitialUrl() {
       endInput.value = params.get("end");
     }
     return "query";
+  }
+  const pageUrl = await currentPageUrl();
+  if (pageUrl && isKnownVideo(pageUrl)) {
+    fillUrl(pageUrl);
+    markPageLink(pageUrl);
+    return "tab";
   }
   return "empty";
 }
@@ -494,6 +679,7 @@ function noteFinished() {
 }
 
 function applyJob(job) {
+  trackLive(job);
   if (job.state === "cancelling" || (cancelling && (job.state === "queued" || job.state === "running"))) {
     cancelling = true;
     clearTimeout(idleMark);
@@ -512,6 +698,9 @@ function applyJob(job) {
     noteFinished();
     render();
     saveDraft();
+    if (downloadsOpen) {
+      refreshDownloads().catch(() => {});
+    }
     return;
   }
   if (job.state === "error") {
@@ -625,9 +814,11 @@ async function startDownload() {
     }
     const job = await response.json();
     jobId = job.id;
+    downloadsOpen = true;
     await saveDraft();
     applyJob(job);
     poll();
+    refreshDownloads().catch(() => {});
   } catch (error) {
     setBanner("bad", error.message || "Não foi possível começar o download.");
     render();
@@ -655,8 +846,14 @@ async function cancelDownload() {
   }
 }
 
-openFolderButton.addEventListener("click", async () => {
-  openFolderButton.disabled = true;
+openFolderButton.addEventListener("click", () => revealFile(""));
+
+downloadsToggle.addEventListener("click", async () => {
+  downloadsOpen = !downloadsOpen;
+  renderDownloads();
+  if (!downloadsOpen) {
+    return;
+  }
   try {
     if (!health?.ok || health.resting || health.idle) {
       await wakeService();
@@ -664,18 +861,12 @@ openFolderButton.addEventListener("click", async () => {
     if (!health?.ok) {
       throw new Error("O serviço não iniciou. Abra Instalar de novo.");
     }
-    const response = await fetch(`${SERVICE}/folder`, {
-      method: "POST",
-      headers: { ...headers, "Content-Type": "application/json" },
-      body: JSON.stringify(savedName ? { name: savedName } : {}),
-    });
-    if (!response.ok) {
-      throw new Error(await readError(response));
-    }
+    downloadsEmpty.textContent = "Nenhum arquivo ainda.";
+    await refreshDownloads();
   } catch (error) {
-    setBanner("bad", error.message || "Não foi possível abrir a pasta.");
+    downloadsEmpty.hidden = false;
+    downloadsEmpty.textContent = error.message || "Não foi possível ler os downloads.";
   }
-  render();
 });
 
 form.addEventListener("submit", (event) => {
@@ -693,6 +884,7 @@ urlInput.addEventListener("input", () => {
   }
   noteUrlChange();
   syncName();
+  pageNote.hidden = !pageLink || urlInput.value.trim() !== pageLink;
   setBanner("", "");
   if (/^https?:\/\//i.test(urlInput.value.trim())) {
     wakeService();
@@ -734,6 +926,7 @@ useTabButton.addEventListener("click", async () => {
   urlInput.value = tab.url;
   stamp = new Date().toISOString();
   autoName = true;
+  markPageLink(tab.url);
   noteUrlChange();
   syncName();
   setBanner("", "");
@@ -993,7 +1186,7 @@ async function boot() {
   buildQualities();
   syncName();
   const extension = isExtension();
-  if (!extension || source === "pending" || source === "query") {
+  if (!extension || source === "pending" || source === "query" || source === "tab") {
     sessionOpen = true;
   }
   scheduleProbe();
