@@ -1,0 +1,23 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Empacota e publica
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/package_extension.py
+          gh release create "$GITHUB_REF_NAME" dist/video-extensao-download.zip \
+            --title "$GITHUB_REF_NAME" \
+            --notes "Extraia o ZIP e dê dois cliques em Instalar. A página abre para colar o link e baixar."
