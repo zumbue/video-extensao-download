@@ -78,6 +78,18 @@ class DownloadTests(unittest.TestCase):
                 self.assertEqual(archive.namelist(), ["youtube_2026-10-30_21-05-09.mp4"])
                 self.assertEqual(archive.read("youtube_2026-10-30_21-05-09.mp4"), b"video-bytes")
 
+    def test_tells_when_the_job_finishes(self):
+        finished = threading.Event()
+        with tempfile.TemporaryDirectory() as directory:
+            manager = DownloadManager(
+                directory,
+                runner=lambda url, opts: write_media(opts),
+                ffmpeg_ok=lambda: True,
+                on_settled=finished.set,
+            )
+            manager.start(request())
+            self.assertTrue(finished.wait(2))
+
     def test_cancel_and_busy_and_missing_ffmpeg(self):
         with tempfile.TemporaryDirectory() as directory:
             entered = threading.Event()

@@ -133,7 +133,7 @@ if ! .venv/bin/python -m pip install -r host/requirements.txt; then
 fi
 
 if ! ./scripts/install-user-service.sh; then
-  gui error "Não consegui ligar o serviço no login."
+  gui error "Não consegui preparar o serviço."
   exit 1
 fi
 
@@ -177,6 +177,8 @@ if [[ -z "${VED_NO_BROWSER:-}" ]]; then
 fi
 
 gui info "A página está pronta. Cole o link e clique em Baixar.
+
+No Linux o programa não fica aberto o tempo todo. A extensão inicia o serviço ao colar um link e ele se encerra sozinho depois do download.
 
 Os arquivos vão para Downloads, na pasta Video Extensao Download.
 

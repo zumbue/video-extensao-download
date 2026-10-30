@@ -3,12 +3,15 @@
 import json
 import os
 import shutil
+import socket
+import socketserver
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
 from . import __version__
 from .download import BusyError, DownloadManager, js_runtimes, probe_media, ytdlp_version
+from .idle import IdleWatch
 from .naming import UserError, detect_network, load_catalog, parse_request
 
 CLIENT_HEADER = "video-extensao-download"
@@ -38,22 +41,35 @@ CONTENT_TYPES = {
 }
 
 
-def health_payload() -> dict:
+def health_payload(idle: IdleWatch | None = None) -> dict:
     runtime = next(iter(js_runtimes()), None)
+    enabled = idle is not None and idle.enabled
     return {
         "ok": True,
         "ffmpeg": shutil.which("ffmpeg") is not None,
         "js_runtime": runtime,
         "ytdlp": ytdlp_version(),
         "version": __version__,
+        "idle_exit": enabled,
+        "idle_seconds": idle.idle_seconds if enabled else None,
+        "settled_seconds": idle.settled_seconds if enabled else None,
     }
 
 
+def keep_alive(path: str, busy: bool) -> str:
+    if busy:
+        return "pause"
+    if path == "/health":
+        return "skip"
+    return "touch"
+
+
 class App:
-    def __init__(self, manager: DownloadManager, catalog: dict, probe=None):
+    def __init__(self, manager: DownloadManager, catalog: dict, probe=None, idle: IdleWatch | None = None):
         self.manager = manager
         self.catalog = catalog
         self.probe = probe or probe_media
+        self.idle = idle
 
 
 def make_handler(app: App):
@@ -73,8 +89,9 @@ def make_handler(app: App):
 
         def do_GET(self) -> None:
             path = urlparse(self.path).path
+            self._activity(path)
             if path == "/health":
-                self._send_json(200, health_payload())
+                self._send_json(200, health_payload(app.idle))
                 return
             if path.startswith("/jobs/"):
                 job_id = path.removeprefix("/jobs/").strip("/")
@@ -95,6 +112,7 @@ def make_handler(app: App):
                 self._send_json(403, {"error": "Origem recusada."})
                 return
             path = urlparse(self.path).path
+            self._activity(path)
             if path == "/download":
                 self._download()
                 return
@@ -113,6 +131,16 @@ def make_handler(app: App):
                 self._send_json(200, job)
                 return
             self._send_json(404, {"error": "Caminho não encontrado."})
+
+        def _activity(self, path: str) -> None:
+            idle = app.idle
+            if idle is None:
+                return
+            kind = keep_alive(path, app.manager.busy())
+            if kind == "pause":
+                idle.pause()
+            elif kind == "touch":
+                idle.touch()
 
         def _local_origin(self) -> str:
             return f"http://127.0.0.1:{self.server.server_address[1]}"
@@ -248,10 +276,49 @@ def make_handler(app: App):
 
 class ReuseServer(ThreadingHTTPServer):
     allow_reuse_address = True
+    daemon_threads = True
 
 
-def serve(app: App, port: int) -> ThreadingHTTPServer:
+class InheritedServer(ReuseServer):
+    daemon_threads = True
+
+    def __init__(self, sock: socket.socket, handler) -> None:
+        sock.setblocking(True)
+        address = sock.getsockname()[:2]
+        socketserver.BaseServer.__init__(self, address, handler)
+        self.address_family = sock.family
+        self.socket_type = sock.type
+        self.socket = sock
+
+
+def inherited_socket() -> socket.socket | None:
+    try:
+        count = int(os.environ.get("LISTEN_FDS", "0") or "0")
+    except ValueError:
+        return None
+    if count < 1:
+        return None
+    expected = os.environ.get("LISTEN_PID")
+    if expected and expected != str(os.getpid()):
+        return None
+    return socket.socket(fileno=3)
+
+
+def serve(app: App, port: int, sock: socket.socket | None = None) -> ThreadingHTTPServer:
+    if sock is not None:
+        return InheritedServer(sock, make_handler(app))
     return ReuseServer((HOST, port), make_handler(app))
+
+
+def _idle_seconds(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
 
 
 def main() -> None:
@@ -260,16 +327,37 @@ def main() -> None:
         "MDE_DOWNLOADS",
         Path.home() / "Downloads" / "Video Extensao Download",
     ))
-    app = App(DownloadManager(downloads), load_catalog())
+    holder: dict = {}
+
+    def on_idle() -> None:
+        print("Serviço encerrado.")
+        server = holder.get("server")
+        if server is not None:
+            server.shutdown()
+
+    idle = IdleWatch(
+        on_idle,
+        idle_seconds=_idle_seconds("MDE_IDLE_SECONDS", 90),
+        settled_seconds=_idle_seconds("MDE_SETTLED_SECONDS", 30),
+        enabled=os.environ.get("MDE_IDLE_EXIT") == "1",
+    )
+    manager = DownloadManager(downloads, on_settled=idle.note_settled, on_start=idle.pause)
+    idle.busy_check = manager.busy
+    app = App(manager, load_catalog(), idle=idle)
     try:
-        server = serve(app, port)
+        server = serve(app, port, inherited_socket())
     except OSError as exc:
+        idle.stop()
         raise SystemExit(f"Não foi possível abrir a porta {port}: {exc}") from exc
-    print(f"Video Extensão Download em http://{HOST}:{port}")
+    holder["server"] = server
+    idle.touch()
+    shown = server.server_address[1]
+    print(f"Video Extensão Download em http://{HOST}:{shown}")
     print(f"Arquivos em {downloads}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nServiço encerrado.")
     finally:
+        idle.stop()
         server.server_close()

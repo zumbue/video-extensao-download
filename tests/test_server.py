@@ -2,6 +2,7 @@ import json
 import sys
 import tempfile
 import threading
+import time
 import unittest
 import zipfile
 from pathlib import Path
@@ -10,9 +11,12 @@ from urllib.request import Request, urlopen
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import socket
+
 from host.download import DownloadManager
+from host.idle import IdleWatch
 from host.naming import load_catalog
-from host.server import CLIENT_HEADER, App, serve
+from host.server import CLIENT_HEADER, App, inherited_socket, keep_alive, serve
 
 
 def write_media(url, opts):
@@ -279,6 +283,62 @@ class ServerTests(unittest.TestCase):
         status, payload, _headers = call(self.port, "POST", "/folder", {}, origin=local)
         self.assertEqual(status, 200)
         self.assertEqual(self.opened[-1], folder)
+
+    def test_health_reports_when_idle_exit_is_off(self):
+        status, payload, _headers = call(self.port, "GET", "/health", client=None)
+        self.assertEqual(status, 200)
+        self.assertFalse(payload["idle_exit"])
+
+
+class IdleTests(unittest.TestCase):
+    def test_health_checks_do_not_keep_the_process(self):
+        self.assertEqual(keep_alive("/health", busy=False), "skip")
+        self.assertEqual(keep_alive("/probe", busy=False), "touch")
+        self.assertEqual(keep_alive("/health", busy=True), "pause")
+
+    def test_inherited_socket_is_absent_without_systemd(self):
+        self.assertIsNone(inherited_socket())
+
+    def test_exits_after_the_download_settles(self):
+        fired = threading.Event()
+        watch = IdleWatch(fired.set, idle_seconds=30, settled_seconds=0.3)
+        watch.note_settled()
+        self.assertTrue(fired.wait(1.5))
+        watch.stop()
+
+    def test_stays_while_a_download_is_running(self):
+        fired = threading.Event()
+        watch = IdleWatch(fired.set, idle_seconds=0.3, settled_seconds=0.3, busy=lambda: True)
+        watch.touch()
+        time.sleep(0.8)
+        self.assertFalse(fired.is_set())
+        watch.stop()
+
+    def test_exits_when_nobody_downloads(self):
+        fired = threading.Event()
+        watch = IdleWatch(fired.set, idle_seconds=0.3, settled_seconds=30)
+        watch.touch()
+        self.assertTrue(fired.wait(1.5))
+        watch.stop()
+
+    def test_serves_on_a_socket_opened_outside(self):
+        with tempfile.TemporaryDirectory() as directory:
+            sock = socket.socket()
+            sock.bind(("127.0.0.1", 0))
+            sock.listen(8)
+            sock.setblocking(False)
+            manager = DownloadManager(directory, runner=lambda url, opts: None, ffmpeg_ok=lambda: True)
+            server = serve(App(manager, load_catalog(), probe=lambda url: {}), 0, sock=sock)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                port = server.server_address[1]
+                status, payload, _headers = call(port, "GET", "/health", client=None)
+                self.assertEqual(status, 200)
+                self.assertTrue(payload["ok"])
+            finally:
+                server.shutdown()
+                server.server_close()
 
 
 if __name__ == "__main__":

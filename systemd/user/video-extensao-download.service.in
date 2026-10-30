@@ -1,5 +1,7 @@
 [Unit]
 Description=Video Extensão Download
+Requires=video-extensao-download.socket
+After=video-extensao-download.socket
 
 [Service]
 Type=simple
@@ -8,6 +10,4 @@ ExecStart=@ROOT@/scripts/serve.sh
 Restart=on-failure
 RestartSec=3
 Environment=PYTHONUNBUFFERED=1
-
-[Install]
-WantedBy=default.target
+Environment=MDE_IDLE_EXIT=1

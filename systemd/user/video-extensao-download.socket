@@ -1,0 +1,10 @@
+[Unit]
+Description=Video Extensão Download
+
+[Socket]
+ListenStream=127.0.0.1:8734
+NoDelay=true
+TriggerLimitIntervalSec=0
+
+[Install]
+WantedBy=sockets.target

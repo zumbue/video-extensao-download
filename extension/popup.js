@@ -45,6 +45,12 @@ let probedId = null;
 let videoId = null;
 let drag = null;
 let savedName = "";
+let sessionOpen = false;
+let finishedOnce = false;
+let healthTimer = null;
+let idleMark = null;
+let wakeGeneration = 0;
+let healthInFlight = null;
 
 function storage() {
   return browserApi?.storage?.session;
@@ -235,13 +241,13 @@ function render() {
 
   const trim = activeTrim();
   renderTrim(network, trim);
-  const serviceReady = Boolean(health?.ok && health.ffmpeg && health.ytdlp);
   const nameReady = globalThis.MDE.sanitizeFilename(filenameInput.value) !== "midia" || filenameInput.value.trim() !== "";
-  const canDownload = serviceReady && network && filenameInput.value.trim() && nameReady && !trim.error;
+  const blocked = Boolean(health?.ok && !health.resting && (!health.ffmpeg || !health.ytdlp));
+  const canDownload = Boolean(network && filenameInput.value.trim() && nameReady && !trim.error && !blocked);
   downloadButton.disabled = jobId ? false : !canDownload;
   downloadButton.textContent = jobId ? "Cancelar" : "Baixar";
   downloadButton.classList.toggle("danger", Boolean(jobId));
-  openFolderButton.disabled = !health?.ok;
+  openFolderButton.disabled = !(health?.ok || health?.resting || savedName);
 
   for (const field of [urlInput, filenameInput, compressInput, useTabButton, renameButton, startInput, endInput, startHandle, endHandle]) {
     field.disabled = Boolean(jobId);
@@ -250,10 +256,18 @@ function render() {
     button.disabled = Boolean(jobId);
   }
 
-  if (!health) {
-    serviceNode.textContent = "verificando";
+  if (health?.resting) {
+    serviceNode.textContent = "encerrado";
     serviceNode.className = "service";
-    hintNode.textContent = "Conferindo o serviço local.";
+    hintNode.textContent = "Serviço encerrado. Cole outro link para baixar de novo.";
+  } else if (health?.idle) {
+    serviceNode.textContent = "em espera";
+    serviceNode.className = "service";
+    hintNode.textContent = "Cole um link para iniciar. O serviço encerra depois do download.";
+  } else if (!health) {
+    serviceNode.textContent = sessionOpen ? "iniciando" : "em espera";
+    serviceNode.className = "service";
+    hintNode.textContent = sessionOpen ? "Iniciando o serviço local." : "Cole um link para iniciar. O serviço encerra depois do download.";
   } else if (!health.ok) {
     serviceNode.textContent = "offline";
     serviceNode.className = "service off";
@@ -338,7 +352,7 @@ async function loadInitialUrl() {
       savedName = stored.draft.savedName || "";
     }
     await session.remove("pendingUrl");
-    return;
+    return jobId ? "job" : "pending";
   }
   const draft = stored.draft;
   if (draft) {
@@ -352,7 +366,7 @@ async function loadInitialUrl() {
     endInput.value = draft.endText || "";
     jobId = draft.jobId || null;
     savedName = draft.savedName || "";
-    return;
+    return jobId ? "job" : "draft";
   }
   const params = new URLSearchParams(location.search);
   if (params.get("url")) {
@@ -372,23 +386,78 @@ async function loadInitialUrl() {
     if (params.get("end")) {
       endInput.value = params.get("end");
     }
-    return;
+    return "query";
   }
   if (!browserApi?.tabs) {
-    return;
+    return "empty";
   }
   const [tab] = await browserApi.tabs.query({ active: true, currentWindow: true });
   if (tab?.url && /^https?:/i.test(tab.url)) {
     urlInput.value = tab.url;
+    return "tab";
   }
+  return "empty";
+}
+
+function isExtension() {
+  return Boolean(browserApi?.runtime?.id);
+}
+
+function stopHealthLoop() {
+  if (healthTimer) {
+    clearInterval(healthTimer);
+    healthTimer = null;
+  }
+}
+
+function armLocalIdle(seconds) {
+  clearTimeout(idleMark);
+  if (!seconds || jobId) {
+    return;
+  }
+  const generation = wakeGeneration;
+  idleMark = setTimeout(() => {
+    if (generation !== wakeGeneration || jobId) {
+      return;
+    }
+    stopHealthLoop();
+    sessionOpen = false;
+    health = finishedOnce
+      ? { resting: true, ok: true, ffmpeg: true, ytdlp: true }
+      : { idle: true };
+    render();
+  }, Math.max(1, seconds - 1) * 1000);
+}
+
+function wakeService() {
+  wakeGeneration += 1;
+  sessionOpen = true;
+  if (!health?.ok || health.idle || health.resting) {
+    health = null;
+    serviceNode.textContent = "iniciando";
+    serviceNode.className = "service";
+    hintNode.textContent = "Iniciando o serviço local.";
+  }
+  if (!healthInFlight) {
+    healthInFlight = checkHealth().finally(() => {
+      healthInFlight = null;
+      if (health?.ok && !health.idle_exit && !healthTimer) {
+        healthTimer = setInterval(checkHealth, 3000);
+      }
+    });
+  }
+  return healthInFlight;
 }
 
 async function checkHealth() {
   try {
-    const response = await fetch(`${SERVICE}/health`, { headers });
+    const response = await fetch(`${SERVICE}/health`, { headers, signal: AbortSignal.timeout(20000) });
     health = response.ok ? await response.json() : { ok: false };
   } catch {
     health = { ok: false };
+  }
+  if (health?.idle_exit && !jobId) {
+    armLocalIdle(health.idle_seconds);
   }
   if (health?.ok && health.ffmpeg && health.ytdlp && probeState === "offline") {
     scheduleProbe();
@@ -405,12 +474,22 @@ async function readError(response) {
   }
 }
 
+function noteFinished() {
+  finishedOnce = true;
+  clearTimeout(idleMark);
+  if (health?.idle_exit) {
+    stopHealthLoop();
+    armLocalIdle(health.settled_seconds || 30);
+  }
+}
+
 function applyJob(job) {
   if (job.state === "done") {
     jobId = null;
     hideProgress();
     savedName = job.name || savedName;
     setBanner("ok", `Salvo: ${job.name}`);
+    noteFinished();
     render();
     saveDraft();
     return;
@@ -419,6 +498,7 @@ function applyJob(job) {
     jobId = null;
     setProgress(job.progress || 0, true);
     setBanner("bad", job.error || "O download falhou.");
+    noteFinished();
     render();
     saveDraft();
     return;
@@ -427,10 +507,12 @@ function applyJob(job) {
     jobId = null;
     hideProgress();
     setBanner("bad", "Download cancelado.");
+    noteFinished();
     render();
     saveDraft();
     return;
   }
+  clearTimeout(idleMark);
   setBanner("", "");
   const amount = job.progress || (job.state === "running" ? 8 : 0);
   setProgress(amount, false);
@@ -444,6 +526,9 @@ async function poll() {
   }
   try {
     const response = await fetch(`${SERVICE}/jobs/${jobId}`, { headers });
+    if (response.status === 404) {
+      throw new Error("O serviço já encerrou este download. Se o arquivo foi salvo, use Abrir pasta.");
+    }
     if (!response.ok) {
       throw new Error(await readError(response));
     }
@@ -468,10 +553,28 @@ async function startDownload() {
     setBanner("bad", "Cole um link http ou https.");
     return;
   }
-  if (!health?.ok) {
-    setBanner("bad", "O serviço local está desligado. Rode ./run.sh.");
+  if (!health?.ok || health.resting || health.idle) {
+    serviceNode.textContent = "iniciando";
+    serviceNode.className = "service";
+    hintNode.textContent = "Iniciando o serviço local.";
+    await wakeService();
+    if (!health?.ok) {
+      setBanner("bad", "O serviço não iniciou. Abra Instalar de novo.");
+      render();
+      return;
+    }
+  }
+  if (!health.ffmpeg) {
+    setBanner("bad", "Instale o FFmpeg para converter o vídeo.");
+    render();
     return;
   }
+  if (!health.ytdlp) {
+    setBanner("bad", "Abra Instalar de novo para instalar o yt-dlp.");
+    render();
+    return;
+  }
+  clearTimeout(idleMark);
   const trim = activeTrim();
   if (trim.error) {
     setBanner("bad", trim.error);
@@ -561,6 +664,9 @@ urlInput.addEventListener("input", () => {
   noteUrlChange();
   syncName();
   setBanner("", "");
+  if (/^https?:\/\//i.test(urlInput.value.trim())) {
+    wakeService();
+  }
   scheduleProbe();
   render();
   saveDraft();
@@ -601,6 +707,7 @@ useTabButton.addEventListener("click", async () => {
   noteUrlChange();
   syncName();
   setBanner("", "");
+  wakeService();
   scheduleProbe();
   render();
   saveDraft();
@@ -644,6 +751,12 @@ function scheduleProbe() {
     return;
   }
   if (id && id === probedId && (probeState === "ready" || probeState === "unknown")) {
+    return;
+  }
+  if (!sessionOpen) {
+    clearTimeout(probeTimer);
+    probeSerial += 1;
+    probeState = "idle";
     return;
   }
   clearTimeout(probeTimer);
@@ -845,17 +958,28 @@ endInput.addEventListener("blur", () => onTrimBlur(endInput));
 async function boot() {
   const response = await fetch("networks.json");
   catalog = await response.json();
-  await loadInitialUrl();
+  const source = await loadInitialUrl();
   videoId = youtubeVideoId(urlInput.value.trim());
   buildQualities();
   syncName();
+  const extension = isExtension();
+  if (!extension || source === "pending" || source === "job" || source === "query") {
+    sessionOpen = true;
+  }
   scheduleProbe();
   render();
-  await checkHealth();
+  if (sessionOpen) {
+    await wakeService();
+  } else {
+    health = savedName ? { resting: true, ok: true, ffmpeg: true, ytdlp: true } : { idle: true };
+    if (savedName) {
+      finishedOnce = true;
+    }
+    render();
+  }
   if (jobId) {
     poll();
   }
-  setInterval(checkHealth, 3000);
 }
 
 boot().catch((error) => {

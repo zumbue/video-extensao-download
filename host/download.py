@@ -161,14 +161,20 @@ class Job:
 
 
 class DownloadManager:
-    def __init__(self, downloads_dir: Path, runner=None, ffmpeg_ok=None, range_factory=None):
+    def __init__(self, downloads_dir: Path, runner=None, ffmpeg_ok=None, range_factory=None, on_settled=None, on_start=None):
         self.downloads_dir = Path(downloads_dir)
         self._runner = runner or default_runner
         self._ffmpeg_ok = ffmpeg_ok if ffmpeg_ok is not None else (lambda: shutil.which("ffmpeg") is not None)
         self._range_factory = range_factory or default_range_factory
+        self._on_settled = on_settled
+        self._on_start = on_start
         self.opener = launch_file_manager
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
+
+    def busy(self) -> bool:
+        with self._lock:
+            return any(job.state in {"queued", "running"} for job in self._jobs.values())
 
     def reveal(self, name: str | None = None) -> Path:
         directory = self.downloads_dir.expanduser().resolve()
@@ -206,6 +212,8 @@ class DownloadManager:
                 raise BusyError("Já existe um download em andamento.")
             job = Job(id=uuid.uuid4().hex[:12])
             self._jobs[job.id] = job
+        if self._on_start is not None:
+            self._on_start()
         threading.Thread(target=self._worker, args=(job, request), daemon=True).start()
         return job.snapshot()
 
@@ -240,6 +248,8 @@ class DownloadManager:
                 job.update(state="error", message=message, error=message)
         finally:
             shutil.rmtree(temporary, ignore_errors=True)
+            if self._on_settled is not None:
+                self._on_settled()
 
     def _store(self, produced: Path, request: DownloadRequest) -> Path:
         if request.compress:

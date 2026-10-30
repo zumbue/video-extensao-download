@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.package_extension import PREFIX, build_zip
 
 ROOT = Path(__file__).resolve().parents[1]
-TEXT_SUFFIXES = {".py", ".js", ".md", ".html", ".sh", ".json", ".css", ".desktop", ".bat", ".ps1", ".in", ".txt"}
+TEXT_SUFFIXES = {".py", ".js", ".md", ".html", ".sh", ".json", ".css", ".desktop", ".bat", ".ps1", ".in", ".txt", ".socket"}
 
 
 class PackageTests(unittest.TestCase):
@@ -38,6 +38,7 @@ class PackageTests(unittest.TestCase):
                 self.assertIn(f"{PREFIX}/scripts/install-click.sh", names)
                 self.assertIn(f"{PREFIX}/scripts/install-windows.ps1", names)
                 self.assertIn(f"{PREFIX}/systemd/user/video-extensao-download.service.in", names)
+                self.assertIn(f"{PREFIX}/systemd/user/video-extensao-download.socket", names)
                 self.assertNotIn(f"{PREFIX}/systemd/user/media-downloader-ext.service.in", names)
                 self.assertIn(f"{PREFIX}/.gitignore", names)
                 self.assertFalse(any(".venv/" in name or name.endswith(".pyc") or "/tests/" in name for name in names))
@@ -59,6 +60,8 @@ class PackageTests(unittest.TestCase):
         self.assertNotIn("privado", text.lower())
         self.assertIn("@ROOT@", text)
         self.assertIn("Video Extensão Download", text)
+        self.assertIn("MDE_IDLE_EXIT=1", text)
+        self.assertNotIn("WantedBy=default.target", text)
 
 
 if __name__ == "__main__":

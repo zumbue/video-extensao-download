@@ -19,5 +19,5 @@ jobs:
         run: |
           python3 scripts/package_extension.py
           gh release create "$GITHUB_REF_NAME" dist/video-extensao-download.zip \
-            --title "$GITHUB_REF_NAME" \
-            --notes "Extraia o ZIP e dê dois cliques em Instalar. A página abre para colar o link e baixar. O botão Abrir pasta mostra o arquivo no gerenciador."
+            --title "Video Extensão Download ${GITHUB_REF_NAME#v}" \
+            --notes "Extraia o ZIP e dê dois cliques em Instalar. A extensão inicia o serviço ao colar um link e ele se encerra sozinho depois do download. O botão Abrir pasta mostra o arquivo no gerenciador."

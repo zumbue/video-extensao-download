@@ -12,7 +12,7 @@ A ideia vem do [media-downloader](https://github.com/mateusands/media-downloader
 
 A página `http://127.0.0.1:8734/` abre sozinha. Cole o link e clique em **Baixar**.
 
-Na primeira vez o sistema pode pedir para confiar no arquivo e, se ainda faltarem, para instalar Python, FFmpeg e Node. O serviço sobe de novo em cada login. Os vídeos caem em `~/Downloads/Video Extensao Download` no Linux e em `Downloads\Video Extensao Download` no Windows.
+Na primeira vez o sistema pode pedir para confiar no arquivo e, se ainda faltarem, para instalar Python, FFmpeg e Node. No Linux o programa não fica aberto o tempo todo: a extensão inicia o serviço ao colar um link e ele se encerra sozinho depois do download. Os vídeos caem em `~/Downloads/Video Extensao Download` no Linux e em `Downloads\Video Extensao Download` no Windows.
 
 Um segundo clique em **Instalar** atualiza o yt-dlp e abre a página de novo.
 
@@ -41,16 +41,15 @@ No Firefox, abra `about:debugging`, escolha "Este Firefox" e carregue `extension
 
 ## Uso
 
-1. Confira o selo **no ar**
-2. Cole o link
-3. Escolha a qualidade
-4. No YouTube, arraste a barra ou digite o início e o fim, por exemplo `1:30` ou `90,5`. Deixe vazio para baixar o vídeo inteiro. O tempo digitado é o corte e demora mais, porque o trecho é recodificado
-5. Ajuste o nome se quiser
-6. Marque **Formato compactado (ZIP)** quando quiser o arquivo em ZIP
-7. Clique em **Baixar**
-8. Clique em **Abrir pasta** para ver o arquivo no gerenciador
+1. Cole o link. O selo vai para **iniciando** e, em seguida, para **no ar**
+2. Escolha a qualidade
+3. No YouTube, arraste a barra ou digite o início e o fim, por exemplo `1:30` ou `90,5`. Deixe vazio para baixar o vídeo inteiro. O tempo digitado é o corte e demora mais, porque o trecho é recodificado
+4. Ajuste o nome se quiser
+5. Marque **Formato compactado (ZIP)** quando quiser o arquivo em ZIP
+6. Clique em **Baixar**
+7. Clique em **Abrir pasta** para ver o arquivo no gerenciador
 
-Se o selo estiver **offline**, abra **Instalar** de novo.
+Depois do download o serviço se encerra sozinho. Cole outro link para baixar de novo. Se o selo ficar **offline**, abra **Instalar** de novo.
 
 ## Desenvolvimento
 
@@ -63,7 +62,7 @@ node tests/detect.test.js
 python3 scripts/package_extension.py
 ```
 
-`./run.sh` sobe o serviço neste terminal. No Linux do dia a dia o serviço do login já faz isso. Os testes não baixam nada da internet. O ZIP de instalação fica em `dist/video-extensao-download.zip`.
+`./run.sh` sobe o serviço neste terminal e fica nele até o processo encerrar. No Linux do dia a dia o soquete escuta a porta e só inicia o programa quando a extensão cola um link. O programa se encerra sozinho depois do download. Os testes não baixam nada da internet. O ZIP de instalação fica em `dist/video-extensao-download.zip`.
 
 ## Aviso
 
