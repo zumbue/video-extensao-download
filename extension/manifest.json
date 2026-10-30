@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Video Extensão Download",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Baixa vídeo de um link. Reconhece a rede, escolhe a qualidade e, no YouTube, o trecho. Nomeia o arquivo pela rede, data e hora.",
   "action": {
     "default_title": "Video Extensão Download",
@@ -21,7 +21,8 @@
   "background": {
     "service_worker": "background.js"
   },
-  "permissions": ["activeTab", "storage", "contextMenus"],
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArU0xzSKCerHtVccOtC7KM+YKsdnDLN9yrASK++fOBDMAI1TpbFAE5MPANOhxi7qzgz9t9kmyB4veA8hmSm12aR+Usy8jgMWwLp96cjPhg2MnpVwNVqt7B+H4+miz+k3mEwQ2Z6LoDl8lCfM3QPlc6fAyVwx359PHUEfALzk/1k6pGwo47ppJOu5yzPEEh/FThutEf0kZQjbMIaEfyRxKIe1jOFkTSQksAFsDSypBFdbYdeACBF6L7mn+uiODISPSdSYE+ENCG8lhkaT32A3eYSb0cTzzqzwIj0sgV3nUR5NOrvRtipogv/DdgMdgT30V3F9FSNBbOK7AiMcgc1qL3wIDAQAB",
+  "permissions": ["activeTab", "storage", "contextMenus", "nativeMessaging"],
   "host_permissions": ["http://127.0.0.1:8734/*"],
   "browser_specific_settings": {
     "gecko": {

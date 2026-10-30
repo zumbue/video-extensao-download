@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Prepara o serviço local e abre a página. Pensado para dois cliques em Instalar.
+# Prepara o serviço local. Pensado para dois cliques em Instalar.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -99,7 +99,7 @@ join_lines() {
   printf '%s' "$joined"
 }
 
-gui toast "Preparando o Video Extensão Download. A página abre em seguida."
+gui toast "Preparando o Video Extensão Download."
 
 mapfile -t missing < <(missing_pkgs)
 if ((${#missing[@]})); then
@@ -161,25 +161,10 @@ if [[ "$ready" != 1 ]]; then
   exit 1
 fi
 
-if [[ -z "${VED_NO_BROWSER:-}" ]]; then
-  opened=0
-  for browser in brave google-chrome chromium microsoft-edge firefox; do
-    if command -v "$browser" >/dev/null 2>&1; then
-      "$browser" "$url" >/dev/null 2>&1 &
-      opened=1
-      break
-    fi
-  done
-  if [[ "$opened" != 1 ]] && command -v xdg-open >/dev/null 2>&1; then
-    xdg-open "$url" >/dev/null 2>&1 &
-  fi
-  disown || true
-fi
+systemctl --user stop video-extensao-download.service || true
 
-gui info "A página está pronta. Cole o link e clique em Baixar.
+gui info "O serviço está pronto. No navegador, ative o modo do desenvolvedor e carregue a pasta extension.
 
-No Linux o programa não fica aberto o tempo todo. A extensão inicia o serviço ao colar um link e ele se encerra sozinho depois do download.
+Abra o ícone da extensão, cole o link e clique em Baixar. O programa sobe ao colar o link e se encerra sozinho depois do download.
 
-Os arquivos vão para Downloads, na pasta Video Extensao Download.
-
-A extensão da pasta extension é opcional. No navegador, ative o modo do desenvolvedor e carregue essa pasta."
+Os arquivos vão para Downloads, na pasta Video Extensao Download."

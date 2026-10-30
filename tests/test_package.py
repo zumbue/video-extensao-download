@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from scripts.package_extension import PREFIX, build_zip
 
 ROOT = Path(__file__).resolve().parents[1]
-TEXT_SUFFIXES = {".py", ".js", ".md", ".html", ".sh", ".json", ".css", ".desktop", ".bat", ".ps1", ".in", ".txt", ".socket"}
+TEXT_SUFFIXES = {".py", ".js", ".md", ".html", ".sh", ".json", ".css", ".desktop", ".bat", ".cmd", ".ps1", ".in", ".txt", ".socket"}
 
 
 class PackageTests(unittest.TestCase):
@@ -37,6 +37,8 @@ class PackageTests(unittest.TestCase):
                 self.assertIn(f"{PREFIX}/Instalar.bat", names)
                 self.assertIn(f"{PREFIX}/scripts/install-click.sh", names)
                 self.assertIn(f"{PREFIX}/scripts/install-windows.ps1", names)
+                self.assertIn(f"{PREFIX}/scripts/ved_host.py", names)
+                self.assertIn(f"{PREFIX}/scripts/ved-host.cmd", names)
                 self.assertIn(f"{PREFIX}/systemd/user/video-extensao-download.service.in", names)
                 self.assertIn(f"{PREFIX}/systemd/user/video-extensao-download.socket", names)
                 self.assertNotIn(f"{PREFIX}/systemd/user/media-downloader-ext.service.in", names)
@@ -48,6 +50,14 @@ class PackageTests(unittest.TestCase):
                 click = archive.getinfo(f"{PREFIX}/scripts/install-click.sh")
                 self.assertTrue((desktop.external_attr >> 16) & 0o111)
                 self.assertTrue((click.external_attr >> 16) & 0o111)
+
+                cmd = archive.read(f"{PREFIX}/scripts/ved-host.cmd")
+                self.assertTrue(cmd.startswith(b"@echo off\r\n"))
+                self.assertNotIn(b"\n", cmd.replace(b"\r\n", b""))
+                self.assertIn(b"ved_host.py", cmd)
+                windows_installer = archive.read(f"{PREFIX}/scripts/install-windows.ps1").decode("utf-8")
+                self.assertNotIn("CreateShortcut", windows_installer)
+                self.assertIn("Video Extensao Download.lnk", windows_installer)
 
                 blob = []
                 for info in archive.infolist():

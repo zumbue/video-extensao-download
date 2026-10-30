@@ -1,5 +1,6 @@
 const SERVICE = "http://127.0.0.1:8734";
 const CLIENT = "video-extensao-download";
+const NATIVE_HOST = "com.videoextensao.download";
 
 const form = document.querySelector("#form");
 const urlInput = document.querySelector("#url");
@@ -311,31 +312,17 @@ function buildQualities() {
   }
 }
 
-async function saveDraft() {
-  const session = storage();
-  if (!session) {
-    return;
-  }
-  await session.set({
-    draft: {
-      url: urlInput.value,
-      quality,
-      filename: filenameInput.value,
-      compress: compressInput.checked,
-      autoName,
-      stamp,
-      jobId,
-      startText: startInput.value,
-      endText: endInput.value,
-      savedName,
-    },
-  });
+function saveDraft() {
+  // O link e o vídeo anterior ficam só enquanto este popup está aberto.
 }
 
 async function loadInitialUrl() {
   const session = storage();
-  const stored = session ? await session.get(["draft", "pendingUrl"]) : {};
-  if (stored.pendingUrl) {
+  const stored = session ? await session.get(["pendingUrl"]) : {};
+  if (session) {
+    await session.remove(["draft", "pendingUrl"]);
+  }
+  if (stored.pendingUrl && /^https?:/i.test(stored.pendingUrl)) {
     urlInput.value = stored.pendingUrl;
     stamp = new Date().toISOString();
     autoName = true;
@@ -345,28 +332,7 @@ async function loadInitialUrl() {
     if (hinted) {
       startInput.value = globalThis.MDE.formatTime(hinted);
     }
-    if (stored.draft) {
-      quality = stored.draft.quality || quality;
-      compressInput.checked = Boolean(stored.draft.compress);
-      jobId = stored.draft.jobId || null;
-      savedName = stored.draft.savedName || "";
-    }
-    await session.remove("pendingUrl");
-    return jobId ? "job" : "pending";
-  }
-  const draft = stored.draft;
-  if (draft) {
-    urlInput.value = draft.url || "";
-    quality = draft.quality || quality;
-    compressInput.checked = Boolean(draft.compress);
-    autoName = draft.autoName !== false;
-    stamp = draft.stamp || null;
-    filenameInput.value = draft.filename || "";
-    startInput.value = draft.startText || "";
-    endInput.value = draft.endText || "";
-    jobId = draft.jobId || null;
-    savedName = draft.savedName || "";
-    return jobId ? "job" : "draft";
+    return "pending";
   }
   const params = new URLSearchParams(location.search);
   if (params.get("url")) {
@@ -388,19 +354,42 @@ async function loadInitialUrl() {
     }
     return "query";
   }
-  if (!browserApi?.tabs) {
-    return "empty";
-  }
-  const [tab] = await browserApi.tabs.query({ active: true, currentWindow: true });
-  if (tab?.url && /^https?:/i.test(tab.url)) {
-    urlInput.value = tab.url;
-    return "tab";
-  }
   return "empty";
 }
 
 function isExtension() {
   return Boolean(browserApi?.runtime?.id);
+}
+
+function onWindows() {
+  return /Windows/i.test(navigator.userAgent || "");
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function nativeRuntime() {
+  if (browserApi?.runtime?.sendNativeMessage) {
+    return browserApi.runtime;
+  }
+  if (globalThis.browser?.runtime?.sendNativeMessage) {
+    return globalThis.browser.runtime;
+  }
+  return null;
+}
+
+async function askWindowsToStart() {
+  const runtime = nativeRuntime();
+  if (!onWindows() || !runtime) {
+    return false;
+  }
+  try {
+    const reply = await runtime.sendNativeMessage(NATIVE_HOST, { start: true });
+    return reply?.ok !== false;
+  } catch {
+    return false;
+  }
 }
 
 function stopHealthLoop() {
@@ -450,11 +439,31 @@ function wakeService() {
 }
 
 async function checkHealth() {
-  try {
-    const response = await fetch(`${SERVICE}/health`, { headers, signal: AbortSignal.timeout(20000) });
-    health = response.ok ? await response.json() : { ok: false };
-  } catch {
-    health = { ok: false };
+  const wakeWindows = onWindows() && !health?.ok;
+  let attempts = wakeWindows ? 81 : 1;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const response = await fetch(`${SERVICE}/health`, {
+        headers,
+        signal: AbortSignal.timeout(wakeWindows ? 2000 : 20000),
+      });
+      health = response.ok ? await response.json() : { ok: false };
+    } catch {
+      health = { ok: false };
+    }
+    if (health?.ok) {
+      break;
+    }
+    if (wakeWindows && attempt === 0) {
+      const asked = await askWindowsToStart();
+      if (!asked) {
+        attempts = attempt + 3;
+      }
+    }
+    if (attempt === attempts - 1) {
+      break;
+    }
+    await delay(250);
   }
   if (health?.idle_exit && !jobId) {
     armLocalIdle(health.idle_seconds);
@@ -629,11 +638,14 @@ async function cancelDownload() {
 }
 
 openFolderButton.addEventListener("click", async () => {
-  if (!health?.ok) {
-    return;
-  }
   openFolderButton.disabled = true;
   try {
+    if (!health?.ok || health.resting || health.idle) {
+      await wakeService();
+    }
+    if (!health?.ok) {
+      throw new Error("O serviço não iniciou. Abra Instalar de novo.");
+    }
     const response = await fetch(`${SERVICE}/folder`, {
       method: "POST",
       headers: { ...headers, "Content-Type": "application/json" },
@@ -963,7 +975,7 @@ async function boot() {
   buildQualities();
   syncName();
   const extension = isExtension();
-  if (!extension || source === "pending" || source === "job" || source === "query") {
+  if (!extension || source === "pending" || source === "query") {
     sessionOpen = true;
   }
   scheduleProbe();
@@ -971,10 +983,7 @@ async function boot() {
   if (sessionOpen) {
     await wakeService();
   } else {
-    health = savedName ? { resting: true, ok: true, ffmpeg: true, ytdlp: true } : { idle: true };
-    if (savedName) {
-      finishedOnce = true;
-    }
+    health = { idle: true };
     render();
   }
   if (jobId) {

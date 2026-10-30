@@ -37,6 +37,5 @@ if errorlevel 1 (
   exit /b 1
 )
 
-start "" "http://127.0.0.1:8734/"
-mshta "javascript:alert('A pagina abriu. Cole o link e clique em Baixar. Os arquivos vao para Downloads, na pasta Video Extensao Download.');close()"
+mshta "javascript:alert('Servico pronto. Recarregue a extensao no navegador. O programa so abre ao colar um link e fecha depois do download. Os arquivos vao para Downloads, na pasta Video Extensao Download.');close()"
 exit /b 0
