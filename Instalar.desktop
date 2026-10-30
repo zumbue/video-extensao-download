@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Instalar Video Extensão Download
+Comment=Prepara o serviço local e abre a página para baixar
+Exec=bash -c 'f="$1"; f="${f#file://}"; cd "$(dirname "$f")" && exec ./scripts/install-click.sh' bash %k
+Terminal=false
+StartupNotify=true
+Icon=download
+Categories=Network;AudioVideo;

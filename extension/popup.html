@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Video Extensão Download</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <img src="icons/icon32.png" width="28" height="28" alt="">
+      <div>
+        <h1>Video Extensão Download</h1>
+        <p>Link, rede, qualidade e nome</p>
+      </div>
+    </div>
+    <p id="service" class="service" role="status">verificando</p>
+  </header>
+
+  <form id="form">
+    <label class="field">
+      <span>Link</span>
+      <span class="row">
+        <input id="url" type="url" inputmode="url" placeholder="Cole qualquer link http ou https" autocomplete="off" spellcheck="false">
+        <button id="use-tab" class="ghost" type="button">Aba</button>
+      </span>
+    </label>
+
+    <div class="field">
+      <span>Rede</span>
+      <p id="network" class="chip">Aguardando link</p>
+    </div>
+
+    <fieldset class="field">
+      <legend>Qualidade</legend>
+      <div id="qualities" class="choices" role="group" aria-label="Qualidade do vídeo"></div>
+    </fieldset>
+
+    <fieldset id="trim" class="field" hidden>
+      <legend>Trecho</legend>
+      <div class="trim-times">
+        <label>
+          <span>Início</span>
+          <input id="trim-start" type="text" placeholder="0:00.00" autocomplete="off" spellcheck="false" aria-describedby="trim-meta">
+        </label>
+        <label>
+          <span>Fim</span>
+          <input id="trim-end" type="text" placeholder="fim" autocomplete="off" spellcheck="false" aria-describedby="trim-meta">
+        </label>
+      </div>
+      <div id="trim-bar" class="trim-bar" hidden>
+        <div class="trim-track"></div>
+        <div id="trim-fill" class="trim-fill"></div>
+        <button id="trim-start-handle" class="trim-handle" type="button" role="slider" aria-label="Início do trecho" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"></button>
+        <button id="trim-end-handle" class="trim-handle" type="button" role="slider" aria-label="Fim do trecho" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0"></button>
+      </div>
+      <small id="trim-meta">Vazio baixa o vídeo inteiro.</small>
+    </fieldset>
+
+    <label class="field">
+      <span class="label-row">
+        Nome
+        <button id="rename" class="text" type="button">Atualizar horário</button>
+      </span>
+      <span class="name-row">
+        <input id="filename" type="text" maxlength="80" autocomplete="off" spellcheck="false" aria-describedby="name-help">
+        <code id="ext">.mp4</code>
+      </span>
+      <small id="name-help">Automático pela rede, data e hora. Dá para editar.</small>
+    </label>
+
+    <label class="check">
+      <input id="compress" type="checkbox">
+      <span>Formato compactado (ZIP)</span>
+    </label>
+
+    <p id="banner" class="banner" hidden></p>
+    <div id="progress-wrap" class="progress-wrap" hidden>
+      <div class="progress" aria-hidden="true"><div id="bar"></div></div>
+      <span id="progress-label">0%</span>
+    </div>
+
+    <button id="download" class="primary" type="submit" disabled>Baixar</button>
+  </form>
+
+  <footer>
+    <p id="hint">Os arquivos vão para a pasta Downloads.</p>
+  </footer>
+
+  <script src="detect.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
