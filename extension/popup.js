@@ -14,6 +14,7 @@ const progressWrap = document.querySelector("#progress-wrap");
 const barNode = document.querySelector("#bar");
 const progressLabel = document.querySelector("#progress-label");
 const downloadButton = document.querySelector("#download");
+const openFolderButton = document.querySelector("#open-folder");
 const useTabButton = document.querySelector("#use-tab");
 const renameButton = document.querySelector("#rename");
 const hintNode = document.querySelector("#hint");
@@ -43,6 +44,7 @@ let probeSerial = 0;
 let probedId = null;
 let videoId = null;
 let drag = null;
+let savedName = "";
 
 function storage() {
   return browserApi?.storage?.session;
@@ -239,6 +241,7 @@ function render() {
   downloadButton.disabled = jobId ? false : !canDownload;
   downloadButton.textContent = jobId ? "Cancelar" : "Baixar";
   downloadButton.classList.toggle("danger", Boolean(jobId));
+  openFolderButton.disabled = !health?.ok;
 
   for (const field of [urlInput, filenameInput, compressInput, useTabButton, renameButton, startInput, endInput, startHandle, endHandle]) {
     field.disabled = Boolean(jobId);
@@ -310,6 +313,7 @@ async function saveDraft() {
       jobId,
       startText: startInput.value,
       endText: endInput.value,
+      savedName,
     },
   });
 }
@@ -331,6 +335,7 @@ async function loadInitialUrl() {
       quality = stored.draft.quality || quality;
       compressInput.checked = Boolean(stored.draft.compress);
       jobId = stored.draft.jobId || null;
+      savedName = stored.draft.savedName || "";
     }
     await session.remove("pendingUrl");
     return;
@@ -346,6 +351,7 @@ async function loadInitialUrl() {
     startInput.value = draft.startText || "";
     endInput.value = draft.endText || "";
     jobId = draft.jobId || null;
+    savedName = draft.savedName || "";
     return;
   }
   const params = new URLSearchParams(location.search);
@@ -403,6 +409,7 @@ function applyJob(job) {
   if (job.state === "done") {
     jobId = null;
     hideProgress();
+    savedName = job.name || savedName;
     setBanner("ok", `Salvo: ${job.name}`);
     render();
     saveDraft();
@@ -517,6 +524,26 @@ async function cancelDownload() {
     render();
   }
 }
+
+openFolderButton.addEventListener("click", async () => {
+  if (!health?.ok) {
+    return;
+  }
+  openFolderButton.disabled = true;
+  try {
+    const response = await fetch(`${SERVICE}/folder`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify(savedName ? { name: savedName } : {}),
+    });
+    if (!response.ok) {
+      throw new Error(await readError(response));
+    }
+  } catch (error) {
+    setBanner("bad", error.message || "Não foi possível abrir a pasta.");
+  }
+  render();
+});
 
 form.addEventListener("submit", (event) => {
   event.preventDefault();

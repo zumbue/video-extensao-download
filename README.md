@@ -25,6 +25,7 @@ Um segundo clique em **Instalar** atualiza o yt-dlp e abre a página de novo.
 - Receber o nome pronto, por exemplo `youtube_2026-10-30_21-05-09`, e editar se quiser
 - Marcar formato compactado para receber um ZIP
 - Acompanhar o progresso, cancelar e ler o resultado em verde ou vermelho
+- Abrir a pasta do vídeo no gerenciador de arquivos
 
 Um link por vez. Verde indica serviço no ar ou download concluído. Vermelho indica serviço desligado, link inválido ou falha.
 
@@ -47,6 +48,7 @@ No Firefox, abra `about:debugging`, escolha "Este Firefox" e carregue `extension
 5. Ajuste o nome se quiser
 6. Marque **Formato compactado (ZIP)** quando quiser o arquivo em ZIP
 7. Clique em **Baixar**
+8. Clique em **Abrir pasta** para ver o arquivo no gerenciador
 
 Se o selo estiver **offline**, abra **Instalar** de novo.
 

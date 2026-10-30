@@ -162,6 +162,26 @@ class DownloadTests(unittest.TestCase):
             {"duration": 3, "title": "a"},
         )
 
+    def test_reveal_stays_inside_the_download_folder(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            video = folder / "video.mp4"
+            video.write_bytes(b"video")
+            outside = folder.parent / "segredo.txt"
+            outside.write_text("x", encoding="utf-8")
+            opened = []
+            manager = DownloadManager(folder, ffmpeg_ok=lambda: True)
+            manager.opener = opened.append
+
+            self.assertEqual(manager.reveal("video.mp4"), video.resolve())
+            self.assertEqual(opened, [video.resolve()])
+
+            self.assertEqual(manager.reveal("../segredo.txt"), folder.resolve())
+            self.assertEqual(manager.reveal("ausente.mp4"), folder.resolve())
+            self.assertEqual(manager.reveal(None), folder.resolve())
+            self.assertEqual(opened[1:], [folder.resolve(), folder.resolve(), folder.resolve()])
+            outside.unlink()
+
 
 if __name__ == "__main__":
     unittest.main()

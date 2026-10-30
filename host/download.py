@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .naming import DownloadRequest, UserError, output_extension
+from .reveal import launch_file_manager
 
 QUALITIES = {
     "best": "bv*+ba/b",
@@ -165,8 +166,22 @@ class DownloadManager:
         self._runner = runner or default_runner
         self._ffmpeg_ok = ffmpeg_ok if ffmpeg_ok is not None else (lambda: shutil.which("ffmpeg") is not None)
         self._range_factory = range_factory or default_range_factory
+        self.opener = launch_file_manager
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
+
+    def reveal(self, name: str | None = None) -> Path:
+        directory = self.downloads_dir.expanduser().resolve()
+        directory.mkdir(parents=True, exist_ok=True)
+        target = directory
+        if isinstance(name, str) and name.strip():
+            leaf = Path(name).name
+            if leaf and leaf not in {".", ".."} and leaf == name.strip():
+                candidate = (directory / leaf).resolve()
+                if candidate.parent == directory and candidate.is_file():
+                    target = candidate
+        self.opener(target)
+        return target
 
     def get(self, job_id: str) -> dict | None:
         job = self._jobs.get(job_id)

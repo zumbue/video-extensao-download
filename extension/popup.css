@@ -368,15 +368,32 @@ input.bad {
   text-align: right;
 }
 
-.primary {
-  width: 100%;
-  height: 42px;
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-top: 8px;
+}
+
+.primary {
+  width: auto;
+  flex: 1;
+  height: 42px;
   border: 1px solid transparent;
   border-radius: 12px;
   background: var(--green);
   color: var(--green-ink);
   font-weight: 600;
+}
+
+#open-folder {
+  height: 42px;
+  padding: 0 12px;
+}
+
+#open-folder:disabled {
+  color: #8d8d8d;
+  cursor: default;
 }
 
 .primary:disabled {

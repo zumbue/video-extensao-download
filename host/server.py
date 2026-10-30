@@ -101,6 +101,9 @@ def make_handler(app: App):
             if path == "/probe":
                 self._probe()
                 return
+            if path == "/folder":
+                self._folder()
+                return
             if path.startswith("/jobs/") and path.endswith("/cancel"):
                 job_id = path.removeprefix("/jobs/").removesuffix("/cancel").strip("/")
                 if not app.manager.cancel(job_id):
@@ -148,6 +151,28 @@ def make_handler(app: App):
                 self._send_json(400, {"error": "Pedido inválido."})
                 return None
             return payload
+
+        def _folder(self) -> None:
+            payload: dict = {}
+            try:
+                length = int(self.headers.get("Content-Length", "0") or 0)
+            except ValueError:
+                length = 0
+            if length > 0:
+                read = self._read_payload()
+                if read is None:
+                    return
+                payload = read
+            name = payload.get("name")
+            if name is not None and not isinstance(name, str):
+                self._send_json(400, {"error": "Arquivo inválido."})
+                return
+            try:
+                app.manager.reveal(name)
+            except OSError:
+                self._send_json(500, {"error": "Não foi possível abrir a pasta."})
+                return
+            self._send_json(200, {"ok": True})
 
         def _download(self) -> None:
             payload = self._read_payload()

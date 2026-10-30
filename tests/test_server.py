@@ -77,6 +77,9 @@ class ServerTests(unittest.TestCase):
             runner=write_media,
             ffmpeg_ok=lambda: True,
         )
+        self.opened = []
+        manager.opener = self.opened.append
+        self.manager = manager
         self.server = serve(App(manager, load_catalog(), probe=probe), 0)
         self.port = self.server.server_address[1]
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -244,6 +247,38 @@ class ServerTests(unittest.TestCase):
         )
         self.assertEqual(status, 403)
         self.assertIsNone(headers.get("Access-Control-Allow-Origin"))
+
+    def test_folder_opens_the_download_directory(self):
+        folder = Path(self.tmp.name).resolve()
+        video = folder / "video.mp4"
+        video.write_bytes(b"video")
+        local = f"http://127.0.0.1:{self.port}"
+
+        status, payload, _headers = call(
+            self.port,
+            "POST",
+            "/folder",
+            {"name": "video.mp4"},
+            origin=local,
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(self.opened, [video])
+
+        status, denied, headers = call(
+            self.port,
+            "POST",
+            "/folder",
+            {"name": "video.mp4"},
+            origin="https://evil.example",
+        )
+        self.assertEqual(status, 403)
+        self.assertIsNone(headers.get("Access-Control-Allow-Origin"))
+        self.assertEqual(len(self.opened), 1)
+
+        status, payload, _headers = call(self.port, "POST", "/folder", {}, origin=local)
+        self.assertEqual(status, 200)
+        self.assertEqual(self.opened[-1], folder)
 
 
 if __name__ == "__main__":
